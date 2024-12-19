@@ -23,7 +23,7 @@ if uploaded_file:
     date_column = st.selectbox("Select the column for dates", options=columns)
 
     # Add a Run button
-    if st.button("Run Calculation"):
+    if st.button("Run IRR and MOIC"):
         if group_by_columns and cashflow_column and date_column:
             st.write(f"Grouping by columns: {group_by_columns}")
             st.write(f"Cashflow column: {cashflow_column}")
