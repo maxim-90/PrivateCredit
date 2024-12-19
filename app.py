@@ -3,7 +3,7 @@ import pandas as pd
 import pyxirr
 
 # Title of the app
-st.title("Customizable IRR Calculator")
+st.title("Customizable IRR and MOIC Calculator")
 
 # File uploader
 uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
@@ -27,29 +27,39 @@ if uploaded_file:
         st.write(f"Cashflow column: {cashflow_column}")
         st.write(f"Date column: {date_column}")
 
-        # Group the data and calculate IRR
+        # Group the data and calculate IRR and MOIC
         irr_results = {}
+        moic_results = {}
+
         try:
             for group_keys, group_data in data.groupby(group_by_columns):
-                # Extract the relevant columns for IRR calculation
+                # Extract the relevant columns for calculations
                 cashflows = group_data[cashflow_column]
                 dates = group_data[date_column]
+
+                # Calculate IRR
                 irr = pyxirr.xirr(dates, cashflows)
                 irr_results[group_keys] = irr
 
-            # Convert IRR results to a DataFrame
-            irr_df = pd.DataFrame.from_dict(
-                irr_results, orient="index", columns=["IRR"]
-            )
-            irr_df.index = pd.MultiIndex.from_tuples(irr_df.index, names=group_by_columns)
+                # Calculate MOIC
+                positive_cashflows = cashflows[cashflows > 0].sum()
+                negative_cashflows = abs(cashflows[cashflows < 0].sum())
+                moic = positive_cashflows / negative_cashflows if negative_cashflows > 0 else None
+                moic_results[group_keys] = moic
 
-            # Display IRR results
-            st.write("IRR Results:")
-            st.write(irr_df)
+            # Combine IRR and MOIC into a single DataFrame
+            results_df = pd.DataFrame({
+                "IRR": pd.Series(irr_results),
+                "MOIC": pd.Series(moic_results),
+            })
+            results_df.index = pd.MultiIndex.from_tuples(results_df.index, names=group_by_columns)
+
+            # Display Results
+            st.write("Results (IRR and MOIC):")
+            st.write(results_df)
 
         except Exception as e:
-            st.error(f"Error calculating IRR: {e}")
+            st.error(f"Error calculating IRR or MOIC: {e}")
 
     else:
         st.warning("Please select all required columns for grouping, cashflow, and dates.")
-
