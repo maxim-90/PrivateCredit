@@ -2,25 +2,49 @@ import streamlit as st
 import pandas as pd
 import pyxirr
 
-st.title("IRR Calculator")
+# Title of the app
+st.title("Customizable IRR Calculator")
 
-uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx"])
+# File uploader
+uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
 
-if uploaded_file is not None:
-    df = pd.read_excel(uploaded_file)
+if uploaded_file:
+    # Read the uploaded Excel file
+    data = pd.read_excel(uploaded_file)
+    st.write("Uploaded Data:")
+    st.write(data)
 
-    # Define the compute_irr function (same as before)
-    def compute_irr(data):
-        cashflows = data['Cashflow'].tolist()
-        dates = data['Date'].tolist()
-        date_strs = [date.strftime('%Y-%m-%d') for date in dates]
-        irr = pyxirr.xirr(date_strs, cashflows)
-        return irr
+    # Select columns for grouping
+    columns = data.columns.tolist()
+    group_by_columns = st.multiselect("Select columns to group by", options=columns, default=None)
 
-    irr_by_deal = df.groupby('Deal').apply(compute_irr)
+    # Ensure required columns for cashflow and date selection
+    cashflow_column = st.selectbox("Select the column for cashflow", options=columns)
+    date_column = st.selectbox("Select the column for dates", options=columns)
 
-    st.write("## IRR Results")
-    st.dataframe(irr_by_deal)
+    if group_by_columns and cashflow_column and date_column:
+        st.write(f"Grouping by columns: {group_by_columns}")
+        st.write(f"Cashflow column: {cashflow_column}")
+        st.write(f"Date column: {date_column}")
 
-if __name__ == "__main__":
-    st.run(debug=True, host="0.0.0.0", port=5000)
+        # Group the data and calculate IRR
+        irr_results = {}
+        try:
+            for group_keys, group_data in data.groupby(group_by_columns):
+                # Extract the relevant columns for IRR calculation
+                cashflows = group_data[cashflow_column]
+                dates = group_data[date_column]
+                irr = pyxirr.xirr(dates, cashflows)
+                irr_results[group_keys] = irr
+
+            # Display IRR results
+            st.write("IRR Results:")
+            irr_df = pd.DataFrame.from_dict(irr_results, orient="index", columns=["IRR"])
+            irr_df.index.names = group_by_columns
+            st.write(irr_df)
+
+        except Exception as e:
+            st.error(f"Error calculating IRR: {e}")
+
+    else:
+        st.warning("Please select all required columns for grouping, cashflow, and dates.")
