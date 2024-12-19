@@ -37,10 +37,14 @@ if uploaded_file:
                 irr = pyxirr.xirr(dates, cashflows)
                 irr_results[group_keys] = irr
 
+            # Convert IRR results to a DataFrame
+            irr_df = pd.DataFrame.from_dict(
+                irr_results, orient="index", columns=["IRR"]
+            )
+            irr_df.index = pd.MultiIndex.from_tuples(irr_df.index, names=group_by_columns)
+
             # Display IRR results
             st.write("IRR Results:")
-            irr_df = pd.DataFrame.from_dict(irr_results, orient="index", columns=["IRR"])
-            irr_df.index.names = group_by_columns
             st.write(irr_df)
 
         except Exception as e:
@@ -48,3 +52,4 @@ if uploaded_file:
 
     else:
         st.warning("Please select all required columns for grouping, cashflow, and dates.")
+
