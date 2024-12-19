@@ -22,44 +22,46 @@ if uploaded_file:
     cashflow_column = st.selectbox("Select the column for cashflow", options=columns)
     date_column = st.selectbox("Select the column for dates", options=columns)
 
-    if group_by_columns and cashflow_column and date_column:
-        st.write(f"Grouping by columns: {group_by_columns}")
-        st.write(f"Cashflow column: {cashflow_column}")
-        st.write(f"Date column: {date_column}")
+    # Add a Run button
+    if st.button("Run Calculation"):
+        if group_by_columns and cashflow_column and date_column:
+            st.write(f"Grouping by columns: {group_by_columns}")
+            st.write(f"Cashflow column: {cashflow_column}")
+            st.write(f"Date column: {date_column}")
 
-        # Group the data and calculate IRR and MOIC
-        irr_results = {}
-        moic_results = {}
+            # Group the data and calculate IRR and MOIC
+            irr_results = {}
+            moic_results = {}
 
-        try:
-            for group_keys, group_data in data.groupby(group_by_columns):
-                # Extract the relevant columns for calculations
-                cashflows = group_data[cashflow_column]
-                dates = group_data[date_column]
+            try:
+                for group_keys, group_data in data.groupby(group_by_columns):
+                    # Extract the relevant columns for calculations
+                    cashflows = group_data[cashflow_column]
+                    dates = group_data[date_column]
 
-                # Calculate IRR
-                irr = pyxirr.xirr(dates, cashflows)
-                irr_results[group_keys] = irr
+                    # Calculate IRR
+                    irr = pyxirr.xirr(dates, cashflows)
+                    irr_results[group_keys] = irr
 
-                # Calculate MOIC
-                positive_cashflows = cashflows[cashflows > 0].sum()
-                negative_cashflows = abs(cashflows[cashflows < 0].sum())
-                moic = positive_cashflows / negative_cashflows if negative_cashflows > 0 else None
-                moic_results[group_keys] = moic
+                    # Calculate MOIC
+                    positive_cashflows = cashflows[cashflows > 0].sum()
+                    negative_cashflows = abs(cashflows[cashflows < 0].sum())
+                    moic = positive_cashflows / negative_cashflows if negative_cashflows > 0 else None
+                    moic_results[group_keys] = moic
 
-            # Combine IRR and MOIC into a single DataFrame
-            results_df = pd.DataFrame({
-                "IRR": pd.Series(irr_results),
-                "MOIC": pd.Series(moic_results),
-            })
-            results_df.index = pd.MultiIndex.from_tuples(results_df.index, names=group_by_columns)
+                # Combine IRR and MOIC into a single DataFrame
+                results_df = pd.DataFrame({
+                    "IRR": pd.Series(irr_results),
+                    "MOIC": pd.Series(moic_results),
+                })
+                results_df.index = pd.MultiIndex.from_tuples(results_df.index, names=group_by_columns)
 
-            # Display Results
-            st.write("Results (IRR and MOIC):")
-            st.write(results_df)
+                # Display Results
+                st.write("Results (IRR and MOIC):")
+                st.write(results_df)
 
-        except Exception as e:
-            st.error(f"Error calculating IRR or MOIC: {e}")
+            except Exception as e:
+                st.error(f"Error calculating IRR or MOIC: {e}")
 
-    else:
-        st.warning("Please select all required columns for grouping, cashflow, and dates.")
+        else:
+            st.warning("Please select all required columns for grouping, cashflow, and dates.")
