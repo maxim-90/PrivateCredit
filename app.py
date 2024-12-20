@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import pyxirr
+import io
 
 # Title of the app
 st.title("Customizable IRR and MOIC Calculator")
@@ -43,12 +44,12 @@ if uploaded_file:
 
                     # Calculate IRR
                     irr = pyxirr.xirr(dates, cashflows)
-                    irr_results[group_keys] = irr
+                    irr_results[group_keys] = round(irr, 4)  # IRR in percentage with 4 decimals
 
                     # Calculate MOIC
                     positive_cashflows = cashflows[cashflows > 0].sum()
                     negative_cashflows = abs(cashflows[cashflows < 0].sum())
-                    moic = positive_cashflows / negative_cashflows if negative_cashflows > 0 else None
+                    moic = round(positive_cashflows / negative_cashflows, 2) if negative_cashflows > 0 else None
                     moic_results[group_keys] = moic
 
                 # Combine IRR and MOIC into a single DataFrame
@@ -61,6 +62,29 @@ if uploaded_file:
                 # Display Results
                 st.write("Results (IRR and MOIC):")
                 st.dataframe(results_df)
+
+                # Prepare the results for Excel export
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                    results_df.to_excel(writer, sheet_name="Results")
+
+                    # Access the xlsxwriter workbook and worksheet
+                    workbook  = writer.book
+                    worksheet = writer.sheets["Results"]
+
+                    # Format the IRR column as percentage with 2 decimals in the UI
+                    percent_format = workbook.add_format({'num_format': '0.00%'})
+                    worksheet.set_column('B:B', 15, percent_format)
+
+                output.seek(0)
+
+                # Provide download button
+                st.download_button(
+                    label="Download Results as Excel",
+                    data=output,
+                    file_name="irr_moic_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
             except Exception as e:
                 st.error(f"Error calculating IRR or MOIC: {e}")
