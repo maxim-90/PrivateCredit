@@ -11,16 +11,18 @@ uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
 if uploaded_file:
     # Read the uploaded Excel file
     data = pd.read_excel(uploaded_file)
-    st.write("Uploaded Data:")
-    st.write(data)
 
-    # Select columns for grouping
-    columns = data.columns.tolist()
-    group_by_columns = st.multiselect("Select columns to group by", options=columns, default=None)
+    # Show the uploaded data preview
+    st.write("Uploaded Data Preview:")
+    st.dataframe(data)
 
     # Ensure required columns for cashflow and date selection
+    columns = data.columns.tolist()
     cashflow_column = st.selectbox("Select the column for cashflow", options=columns)
     date_column = st.selectbox("Select the column for dates", options=columns)
+
+    # Show the "Group By" selection after cashflow and date column mapping
+    group_by_columns = st.multiselect("Select columns to group by", options=columns, default=None)
 
     # Add a Run button
     if st.button("Run IRR and MOIC"):
@@ -58,7 +60,7 @@ if uploaded_file:
 
                 # Display Results
                 st.write("Results (IRR and MOIC):")
-                st.write(results_df)
+                st.dataframe(results_df)
 
             except Exception as e:
                 st.error(f"Error calculating IRR or MOIC: {e}")
