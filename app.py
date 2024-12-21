@@ -144,10 +144,10 @@ if uploaded_file:
                     # Store results for MOIC
                     moic_attribution_results.append({
                         **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
-                        "MOIC Market Contribution": moic_contribution_base,
-                        "MOIC Cash Contribution": moic_contribution_cash,
-                        "MOIC Fee Contribution": moic_contribution_fees,
-                        "MOIC PIK Contribution": moic_contribution_pik
+                        "Market Contribution": moic_contribution_base,
+                        "Cash Contribution": moic_contribution_cash,
+                        "Fee Contribution": moic_contribution_fees,
+                        "PIK Contribution": moic_contribution_pik
                     })
 
                 # Convert results into DataFrames
@@ -165,10 +165,10 @@ if uploaded_file:
 
                 # Add a "Total" column for MOIC attribution
                 moic_attribution_df["Total MOIC"] = (
-                    moic_attribution_df["MOIC Cash Contribution"] +
-                    moic_attribution_df["MOIC Fee Contribution"] +
-                    moic_attribution_df["MOIC PIK Contribution"]+
-                    moic_attribution_df["MOIC Market Contribution"]
+                    moic_attribution_df["Cash Contribution"] +
+                    moic_attribution_df["Fee Contribution"] +
+                    moic_attribution_df["PIK Contribution"]+
+                    moic_attribution_df["Market Contribution"]
                 )
 
                 # Display results
