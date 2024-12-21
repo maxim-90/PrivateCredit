@@ -164,7 +164,7 @@ if uploaded_file:
                 )
 
                 # Add a "Total" column for MOIC attribution
-                moic_attribution_df["Total MOIC"] = (
+                moic_attribution_df["Total"] = (
                     moic_attribution_df["Cash Contribution"] +
                     moic_attribution_df["Fee Contribution"] +
                     moic_attribution_df["PIK Contribution"]+
