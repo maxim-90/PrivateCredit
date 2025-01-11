@@ -1,4 +1,4 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import pyxirr
 import io
@@ -9,7 +9,7 @@ os.environ['STREAMLIT_SERVER_PORT'] = '8080'
 os.environ['STREAMLIT_SERVER_ADDRESS'] = '0.0.0.0'
 
 # Title of the app
-st.title("Private Credit Return Calculator")
+st.title("Private Markets Return Calculator")
 
 # File uploader
 uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"])
@@ -22,14 +22,14 @@ if uploaded_file:
     st.write("Uploaded Data Preview:")
     st.dataframe(data)
 
-    # Ensure required columns for cashflow and date selection
+    # Ensure required columns for cashflow, date, and type selection
     columns = data.columns.tolist()
     cashflow_column = st.selectbox("Select the column for cashflow", options=columns)
     date_column = st.selectbox("Select the column for dates", options=columns)
 
     # Group by selection
     group_by_columns = st.multiselect("Select columns to group by", options=columns, default=None)
-
+    
     # "Run IRR and MOIC" button
     if st.button("Run IRR and MOIC"):
         if group_by_columns and cashflow_column and date_column:
@@ -83,116 +83,142 @@ if uploaded_file:
         else:
             st.warning("Please select columns to group by, and ensure cashflow and date columns are selected.")
 
-    # "Calculate Performance Attribution" button
-    if st.button("Calculate IRR and MOIC Attribution"):
-        if group_by_columns and cashflow_column and date_column:
-            try:
-                # Initialize results dictionary
-                irr_attribution_results = []
-                moic_attribution_results = []
+    # Specify type column
+    type_column = st.selectbox("Select the column for performance attribution grouping (e.g. cashflow type).", options=columns)
+    # Define custom groups for attribution
+    if type_column:
+        st.write("Define your custom groups and map them to entries in the selected performance attribution column. Note, for a gross performance bridge with cashflow types, start with investment outlay and sales/principal repayments and market value/NAV. Afterwards build components by adding fees, dividends, interest, etc.")
+        unique_types = data[type_column].unique()
 
-                # Group data by selected columns
-                for group_keys, group_data in data.groupby(group_by_columns):
-                    # Filters for different types
-                    principal = group_data[group_data['Type'].isin(['Investment Outlay', 'Realised Principal', 'Outstanding Principal'])]
-                    cash_interest = group_data[group_data['Type'].isin(['Cash Interest', 'Accrued Cash Interest'])]
-                    upfront_fees = group_data[group_data['Type'].isin(['Upfront Fee'])]
-                    pik_interest = group_data[group_data['Type'].isin(['Realised PIK', 'Accrued PIK'])]
+        # Initialize session state for group mappings
+        if "group_count" not in st.session_state:
+            st.session_state.group_count = 1
+            st.session_state.groups = [{"name": f"Group {i+1}", "types": []} for i in range(st.session_state.group_count)]
 
-                    # Concatenate DataFrames
-                    principal_cash = pd.concat([principal, cash_interest], ignore_index=True)
-                    principal_cash_fees = pd.concat([principal_cash, upfront_fees], ignore_index=True)
-                    principal_cash_fees_pik = pd.concat([principal_cash_fees, pik_interest], ignore_index=True)
+        # Add Group button
+        if st.button("Add Group"):
+            st.session_state.group_count += 1
+            st.session_state.groups.append({"name": f"Group {st.session_state.group_count}", "types": []})
 
-                    # IRR Contributions
-                    market_base =pyxirr.xirr(principal[date_column], principal[cashflow_column])
-                    
-                    cash_contribution = pyxirr.xirr(principal_cash[date_column], principal_cash[cashflow_column]) - \
-                                        pyxirr.xirr(principal[date_column], principal[cashflow_column])
-                    fee_contribution = pyxirr.xirr(principal_cash_fees[date_column], principal_cash_fees[cashflow_column]) - \
-                                       pyxirr.xirr(principal_cash[date_column], principal_cash[cashflow_column])
-                    pik_contribution = pyxirr.xirr(principal_cash_fees_pik[date_column], principal_cash_fees_pik[cashflow_column]) - \
-                                       pyxirr.xirr(principal_cash_fees[date_column], principal_cash_fees[cashflow_column])
+        # Render group inputs dynamically
+        for i, group in enumerate(st.session_state.groups):
+            group_name = st.text_input(f"Name of Group {i+1}", value=group["name"], key=f"group_name_{i}")
+            selected_types = st.multiselect(
+                f"Select types for {group_name}",
+                options=unique_types,
+                default=group["types"],
+                key=f"group_types_{i}"
+            )
+            group["name"] = group_name
+            group["types"] = selected_types
 
-                    # MOIC Contributions
-                    positive_cashflows = principal[cashflow_column][principal[cashflow_column] > 0].sum()
-                    negative_cashflows = abs(group_data[cashflow_column][group_data[cashflow_column] < 0].sum())
-                    moic_contribution_base = positive_cashflows / negative_cashflows if negative_cashflows > 0 else None
+        # Map user-defined groups to a dictionary
+        group_mapping = {group["name"]: group["types"] for group in st.session_state.groups}
 
-                    positive_cashflows_cash = cash_interest[cashflow_column][cash_interest[cashflow_column] > 0].sum()
-                   
-                    moic_contribution_cash = positive_cashflows_cash / negative_cashflows if negative_cashflows > 0 else None
-                    positive_cashflows_fees = upfront_fees[cashflow_column][upfront_fees[cashflow_column] > 0].sum()
+        st.write("Your group mappings:")
+        st.json(group_mapping)
+        # Calculate Performance Attribution
+        if st.button("Calculate IRR and MOIC Attribution"):
+            if group_by_columns and cashflow_column and date_column:
+                try:
+                    # Initialize results
+                    irr_attribution_results = []
+                    moic_attribution_results = []
 
-                    moic_contribution_fees = positive_cashflows_fees / negative_cashflows if negative_cashflows > 0 else None
+                    for group_keys, group_data in data.groupby(group_by_columns):
+                        attribution_results = {}
+                        previous_data = pd.DataFrame()
 
+                        for group_name, types in group_mapping.items():
+                            # Filter current group and concatenate with previous data
+                            current_data = group_data[group_data["Type"].isin(types)]
+                            combined_data = pd.concat([previous_data, current_data], ignore_index=True)
 
-                    positive_cashflows_pik = pik_interest[cashflow_column][pik_interest[cashflow_column] > 0].sum()
-                    
-                    moic_contribution_pik = positive_cashflows_pik / negative_cashflows if negative_cashflows > 0 else None
+                            # Calculate IRR for combined data minus previous data
+                            if not combined_data.empty and not previous_data.empty:
+                                combined_cashflows = combined_data[cashflow_column]
+                                combined_dates = combined_data[date_column]
+                                previous_cashflows = previous_data[cashflow_column]
+                                previous_dates = previous_data[date_column]
+                                combined_irr = pyxirr.xirr(combined_dates, combined_cashflows)
+                                previous_irr = pyxirr.xirr(previous_dates, previous_cashflows)
+                                irr = combined_irr - previous_irr if combined_irr is not None and previous_irr is not None else combined_irr
+                            elif not combined_data.empty:
+                                combined_cashflows = combined_data[cashflow_column]
+                                combined_dates = combined_data[date_column]
+                                irr = pyxirr.xirr(combined_dates, combined_cashflows)
+                            else:
+                                irr = 0
 
-                    # Store results for IRR
-                    irr_attribution_results.append({
-                        **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
+                            # Calculate MOIC for combined data minus previous data
+                            if not combined_data.empty and not previous_data.empty:
+                                combined_positive = combined_data[cashflow_column][combined_data[cashflow_column] > 0].sum()
+                                combined_negative = abs(combined_data[cashflow_column][combined_data[cashflow_column] < 0].sum())
+                                combined_moic = combined_positive / combined_negative if combined_negative > 0 else None
 
-                        "Market Contribution": market_base,
-                        "Cash Contribution": cash_contribution,
-                        "Fee Contribution": fee_contribution,
-                        "PIK Contribution": pik_contribution
-                    })
+                                previous_positive = previous_data[cashflow_column][previous_data[cashflow_column] > 0].sum()
+                                previous_negative = abs(previous_data[cashflow_column][previous_data[cashflow_column] < 0].sum())
+                                previous_moic = previous_positive / previous_negative if previous_negative > 0 else None
 
-                    # Store results for MOIC
-                    moic_attribution_results.append({
-                        **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
-                        "Market Contribution": moic_contribution_base,
-                        "Cash Contribution": moic_contribution_cash,
-                        "Fee Contribution": moic_contribution_fees,
-                        "PIK Contribution": moic_contribution_pik
-                    })
+                                moic = combined_moic - previous_moic if previous_moic is not None else combined_moic
+                            elif not combined_data.empty:
+                                combined_positive = combined_data[cashflow_column][combined_data[cashflow_column] > 0].sum()
+                                combined_negative = abs(combined_data[cashflow_column][combined_data[cashflow_column] < 0].sum())
+                                moic = combined_positive / combined_negative if combined_negative > 0 else None
+                            else:
+                                moic = 0
 
-                # Convert results into DataFrames
-                irr_attribution_df = pd.DataFrame(irr_attribution_results)
-                moic_attribution_df = pd.DataFrame(moic_attribution_results)
+                            attribution_results[group_name] = {"IRR": irr, "MOIC": moic}
 
-                # Add a "Total" column for IRR attribution
-                irr_attribution_df["Total"] = (
-                    irr_attribution_df["Cash Contribution"] +
-                    irr_attribution_df["Fee Contribution"] +
-                    irr_attribution_df["PIK Contribution"]+
-                    irr_attribution_df["Market Contribution"]
-                    
-                )
+                            # Update previous data
+                            previous_data = combined_data
 
-                # Add a "Total" column for MOIC attribution
-                moic_attribution_df["Total"] = (
-                    moic_attribution_df["Cash Contribution"] +
-                    moic_attribution_df["Fee Contribution"] +
-                    moic_attribution_df["PIK Contribution"]+
-                    moic_attribution_df["Market Contribution"]
-                )
+                        # Append results
+                        irr_attribution_results.append(
+                            {
+                                **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
+                                **{f"{group_name} IRR": res["IRR"] for group_name, res in attribution_results.items()},
+                            }
+                        )
+                        moic_attribution_results.append(
+                            {
+                                **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
+                                **{f"{group_name} MOIC": res["MOIC"] for group_name, res in attribution_results.items()},
+                            }
+                        )
 
-                # Display results
-                st.write("Performance Attribution Results (IRR):")
-                st.dataframe(irr_attribution_df)
+                    # Convert to DataFrames
+                    irr_attribution_df = pd.DataFrame(irr_attribution_results)
+                    moic_attribution_df = pd.DataFrame(moic_attribution_results)
 
-                st.write("Performance Attribution Results (MOIC):")
-                st.dataframe(moic_attribution_df)
+                    # Add totals column
+                    irr_attribution_df["Total IRR"] = irr_attribution_df.iloc[:, len(group_by_columns):].sum(axis=1)
+                    moic_attribution_df["Total MOIC"] = moic_attribution_df.iloc[:, len(group_by_columns):].sum(axis=1)
 
-                # Provide a download button for results
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                    irr_attribution_df.to_excel(writer, sheet_name="IRR Attribution Results", index=False)
-                    moic_attribution_df.to_excel(writer, sheet_name="MOIC Attribution Results", index=False)
-                output.seek(0)
+                    # Display results
+                    st.write("Performance Attribution Results (IRR):")
+                    st.dataframe(irr_attribution_df)
 
-                st.download_button(
-                    label="Download Attribution Results as Excel",
-                    data=output,
-                    file_name="performance_attribution_results_separated.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                    st.write("Performance Attribution Results (MOIC):")
+                    st.dataframe(moic_attribution_df)
 
-            except Exception as e:
-                st.error(f"Error calculating performance attribution: {e}")
-        else:
-            st.warning("Please select columns to group by, and ensure cashflow and date columns are selected.")
+                    # Provide download option
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+                        irr_attribution_df.to_excel(writer, sheet_name="IRR Attribution Results", index=False)
+                        moic_attribution_df.to_excel(writer, sheet_name="MOIC Attribution Results", index=False)
+                    output.seek(0)
+
+                    st.download_button(
+                        label="Download Attribution Results as Excel",
+                        data=output,
+                        file_name="performance_attribution_results.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                except Exception as e:
+                    st.error(f"Error calculating performance attribution: {e}")
+            else:
+                st.warning("Please select columns to group by, and ensure cashflow and date columns are selected.")
+    else:
+        st.warning("'Type' column not found in the uploaded data.")
