@@ -177,13 +177,13 @@ if uploaded_file:
                         irr_attribution_results.append(
                             {
                                 **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
-                                **{f"{group_name} IRR": res["IRR"] for group_name, res in attribution_results.items()},
+                                **{f"{group_name} contribution": res["IRR"] for group_name, res in attribution_results.items()},
                             }
                         )
                         moic_attribution_results.append(
                             {
                                 **{col: group_keys[i] for i, col in enumerate(group_by_columns)},
-                                **{f"{group_name} MOIC": res["MOIC"] for group_name, res in attribution_results.items()},
+                                **{f"{group_name} contribution": res["MOIC"] for group_name, res in attribution_results.items()},
                             }
                         )
 
