@@ -131,7 +131,7 @@ if uploaded_file:
 
                         for group_name, types in group_mapping.items():
                             # Filter current group and concatenate with previous data
-                            current_data = group_data[group_data["Type"].isin(types)]
+                            current_data = group_data[group_data[type_column].isin(types)]
                             combined_data = pd.concat([previous_data, current_data], ignore_index=True)
 
                             # Calculate IRR for combined data minus previous data
