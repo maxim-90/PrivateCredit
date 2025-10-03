@@ -1188,6 +1188,7 @@ if section == "Cashflow Forecasting":
                     "Loan Name": "Loan A",
                     "Currency": "USD",
                     "Current Balance": 1_000_000.0,
+                    "OID %": 2,
                     "Cash Interest % (over base)": 4.0,
                     "PIK %": 2.0,
                     "Base Rate Type": "SOFR",
@@ -1207,6 +1208,7 @@ if section == "Cashflow Forecasting":
             num_rows="dynamic",
             use_container_width=True,
             column_config={
+                "OID %": st.column_config.NumberColumn(format="%0.2f"),
                 "Cash Interest % (over base)": st.column_config.NumberColumn(format="%0.2f"),
                 "PIK %": st.column_config.NumberColumn(format="%0.2f"),
                 "Base Rate %": st.column_config.NumberColumn(format="%0.2f"),
@@ -1232,6 +1234,7 @@ if section == "Cashflow Forecasting":
             name = str(loan_row.get("Loan Name", "Loan"))
             currency = str(loan_row.get("Currency", "USD"))
             balance = float(loan_row.get("Current Balance", 0.0))
+            oid_pct = float(loan_row.get("OID %", 0.0)) / 100.0
             cash_spread = float(loan_row.get("Cash Interest % (over base)", 0.0)) / 100.0
             pik_rate = float(loan_row.get("PIK %", 0.0)) / 100.0
             base_rate = float(loan_row.get("Base Rate %", 0.0)) / 100.0
@@ -1252,7 +1255,9 @@ if section == "Cashflow Forecasting":
             # Build period dates from the day after last coupon up to exit
             schedule_rows = []
             
-            # Initial loan disbursement
+            # Initial loan disbursement (with OID discount)
+            oid_discount = balance * oid_pct
+            initial_outlay = balance - oid_discount
             schedule_rows.append({
                 "Loan Name": name,
                 "Currency": currency,
@@ -1261,9 +1266,9 @@ if section == "Cashflow Forecasting":
                 "Days": 0,
                 "Cash Interest": 0.0,
                 "PIK Interest": 0.0,
-                "Principal": round(-balance, 2),
+                "Principal": round(-initial_outlay, 2),
                 "Balance": round(balance, 2),
-                "Net Cashflow": round(-balance, 2),
+                "Net Cashflow": round(-initial_outlay, 2),
             })
 
             # Handle partial accrual from last coupon to as_of (if before next coupon)
