@@ -480,6 +480,27 @@ if section == "Cashflow Forecasting":
             debt_balance = initial_debt
 
             schedule = []
+            
+            # Initial acquisition cashflow
+            equity_investment = acq_value * (1 - leverage_pct)
+            schedule.append({
+                "Property Name": name,
+                "Currency": currency,
+                "Date": acq_date,
+                "Type": "Acquisition",
+                "Days": 0,
+                "Gross Revenue": 0,
+                "Operating Expenses": 0,
+                "CapEx Reserve": 0,
+                "Management Fee": 0,
+                "NOI After Fees": 0,
+                "Interest Payment": 0,
+                "Principal Payment": 0,
+                "Cash to Equity": round(-equity_investment, 2),
+                "Debt Balance": round(initial_debt, 2),
+                "Net Cashflow": round(-equity_investment, 2),
+            })
+            
             current_date = acq_date
             year_counter = 0
 
@@ -1230,6 +1251,20 @@ if section == "Cashflow Forecasting":
 
             # Build period dates from the day after last coupon up to exit
             schedule_rows = []
+            
+            # Initial loan disbursement
+            schedule_rows.append({
+                "Loan Name": name,
+                "Currency": currency,
+                "Date": last_coupon_date,
+                "Type": "Loan Disbursement",
+                "Days": 0,
+                "Cash Interest": 0.0,
+                "PIK Interest": 0.0,
+                "Principal": round(-balance, 2),
+                "Balance": round(balance, 2),
+                "Net Cashflow": round(-balance, 2),
+            })
 
             # Handle partial accrual from last coupon to as_of (if before next coupon)
             # Interest accrues daily on balance at (base + spread + PIK). Cash pays per frequency; PIK capitalizes at coupon dates.
