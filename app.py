@@ -605,6 +605,25 @@ if section == "Cashflow Forecasting":
                         ["Gross Revenue", "Operating Expenses", "CapEx Reserve", "Management Fee", 
                          "Interest Payment", "Principal Payment", "Cash to Equity", "Net Cashflow"]
                     ].sum()
+                    
+                    # Add returns calculation
+                    for idx, row_sum in summary.iterrows():
+                        property_name = row_sum["Property Name"]
+                        prop_schedule = full_schedule[full_schedule["Property Name"] == property_name]
+                        dates = pd.to_datetime(prop_schedule["Date"])
+                        cashflows = prop_schedule["Net Cashflow"]
+                        try:
+                            irr = pyxirr.xirr(dates, cashflows)
+                            summary.at[idx, "IRR %"] = round(irr * 100, 2)
+                            
+                            invested = abs(cashflows[cashflows < 0].sum())
+                            returned = cashflows[cashflows > 0].sum()
+                            moic = returned / invested if invested > 0 else 0
+                            summary.at[idx, "MOIC"] = round(moic, 2)
+                        except:
+                            summary.at[idx, "IRR %"] = None
+                            summary.at[idx, "MOIC"] = None
+                    
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
@@ -646,6 +665,7 @@ if section == "Cashflow Forecasting":
                 "Entry Debt": 50_000_000.0,
                 "Annual Debt Paydown": 5_000_000.0,
                 "Interest Rate %": 6.0,
+                "FCF Conversion %": 60.0,
                 "Dividend Payout Ratio %": 0.0,
                 "Management Fee % of NAV": 2.0,
                 "Transaction Costs %": 2.0,
@@ -668,6 +688,7 @@ if section == "Cashflow Forecasting":
                 "Entry Debt": st.column_config.NumberColumn(format="$%,.0f"),
                 "Annual Debt Paydown": st.column_config.NumberColumn(format="$%,.0f"),
                 "Interest Rate %": st.column_config.NumberColumn(format="%.2f"),
+                "FCF Conversion %": st.column_config.NumberColumn(format="%.1f"),
                 "Ownership %": st.column_config.NumberColumn(format="%.1f"),
                 "Dividend Payout Ratio %": st.column_config.NumberColumn(format="%.1f"),
                 "Management Fee % of NAV": st.column_config.NumberColumn(format="%.2f"),
@@ -691,6 +712,7 @@ if section == "Cashflow Forecasting":
             entry_debt = float(row.get("Entry Debt", 0))
             annual_paydown = float(row.get("Annual Debt Paydown", 0))
             interest_rate = float(row.get("Interest Rate %", 0)) / 100.0
+            fcf_conversion = float(row.get("FCF Conversion %", 60)) / 100.0
             dividend_ratio = float(row.get("Dividend Payout Ratio %", 0)) / 100.0
             mgmt_fee_pct = float(row.get("Management Fee % of NAV", 0)) / 100.0
             txn_costs_pct = float(row.get("Transaction Costs %", 0)) / 100.0
@@ -753,7 +775,7 @@ if section == "Cashflow Forecasting":
                 mgmt_fee = current_equity_value * mgmt_fee_pct
                 
                 # Dividends (if any)
-                free_cash_flow = current_ebitda * 0.6  # Assume 60% FCF conversion
+                free_cash_flow = current_ebitda * fcf_conversion  # User-defined FCF conversion
                 dividend = free_cash_flow * dividend_ratio * ownership
                 
                 net_cf = dividend - mgmt_fee
@@ -1042,7 +1064,11 @@ if section == "Cashflow Forecasting":
             if revenue_model == "Merchant/Volume":
                 exit_revenue *= ((1 + volume_growth) ** years_at_exit)
             
-            exit_ev = exit_revenue * exit_multiple
+            # Calculate exit operating expenses consistently with operating years
+            exit_opex = fixed_opex * ((1 + opex_inflation) ** years_at_exit)
+            exit_ebitda = exit_revenue - exit_opex
+            
+            exit_ev = exit_revenue * exit_multiple  # Infrastructure uses EV/Revenue multiples
             exit_proceeds = exit_ev - debt_balance
             
             schedule.append({
@@ -1051,9 +1077,9 @@ if section == "Cashflow Forecasting":
                 "Date": exit_date,
                 "Type": "Exit Sale",
                 "Revenue": round(exit_revenue, 2),
-                "Operating Expenses": 0,
+                "Operating Expenses": round(-exit_opex, 2),
                 "Maintenance CapEx": 0,
-                "EBITDA": round(exit_revenue * 0.8, 2),  # Assume 80% EBITDA margin at exit
+                "EBITDA": round(exit_ebitda, 2),
                 "Interest Expense": 0,
                 "Principal Payment": round(-debt_balance, 2),
                 "Distributable Cash": round(exit_proceeds, 2),
@@ -1305,6 +1331,25 @@ if section == "Cashflow Forecasting":
                         full_schedule.groupby(["Loan Name", "Currency"], as_index=False)[["Cash Interest", "PIK Interest", "Principal", "Net Cashflow"]]
                         .sum()
                     )
+                    
+                    # Add returns calculation
+                    for idx, row_sum in summary.iterrows():
+                        loan_name = row_sum["Loan Name"]
+                        loan_schedule = full_schedule[full_schedule["Loan Name"] == loan_name]
+                        dates = pd.to_datetime(loan_schedule["Date"])
+                        cashflows = loan_schedule["Net Cashflow"]
+                        try:
+                            irr = pyxirr.xirr(dates, cashflows)
+                            summary.at[idx, "IRR %"] = round(irr * 100, 2)
+                            
+                            invested = abs(cashflows[cashflows < 0].sum())
+                            returned = cashflows[cashflows > 0].sum()
+                            moic = returned / invested if invested > 0 else 0
+                            summary.at[idx, "MOIC"] = round(moic, 2)
+                        except:
+                            summary.at[idx, "IRR %"] = None
+                            summary.at[idx, "MOIC"] = None
+                    
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
