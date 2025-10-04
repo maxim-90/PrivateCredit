@@ -645,6 +645,9 @@ if section == "Cashflow Forecasting":
                             summary.at[idx, "IRR %"] = None
                             summary.at[idx, "MOIC"] = None
                     
+                    # Format MOIC column to display with 2 decimal places
+                    if "MOIC" in summary.columns:
+                        summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
@@ -887,6 +890,9 @@ if section == "Cashflow Forecasting":
                             summary.at[idx, "IRR %"] = None
                             summary.at[idx, "MOIC"] = None
                     
+                    # Format MOIC column to display with 2 decimal places
+                    if "MOIC" in summary.columns:
+                        summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
@@ -1149,6 +1155,9 @@ if section == "Cashflow Forecasting":
                             summary.at[idx, "IRR %"] = None
                             summary.at[idx, "MOIC"] = None
                     
+                    # Format MOIC column to display with 2 decimal places
+                    if "MOIC" in summary.columns:
+                        summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
@@ -1390,6 +1399,9 @@ if section == "Cashflow Forecasting":
                             summary.at[idx, "IRR %"] = None
                             summary.at[idx, "MOIC"] = None
                     
+                    # Format MOIC column to display with 2 decimal places
+                    if "MOIC" in summary.columns:
+                        summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
                     st.dataframe(summary, use_container_width=True)
 
                     # Download
