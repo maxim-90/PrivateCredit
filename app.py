@@ -1196,14 +1196,14 @@ if section == "Cashflow Forecasting":
                 {
                     "Loan Name": "Loan A",
                     "Currency": "USD",
-                    "Current Balance": 1_000_000.0,
+                    "Principal": 1_000_000.0,
                     "OID %": 2,
                     "Cash Interest % (over base)": 4.0,
                     "PIK %": 2.0,
                     "Base Rate Type": "SOFR",
                     "Base Rate %": 5.0,
                     "Interest Frequency": "Quarterly",
-                    "Last Coupon Date": pd.to_datetime(date.today() - timedelta(days=45)),
+                    "Investment Date": pd.to_datetime(date.today() - timedelta(days=45)),
                     "Exit Date": pd.to_datetime(date.today() + timedelta(days=365)),
                     "Exit Price % of Par": 100.0,
                 }
@@ -1222,15 +1222,14 @@ if section == "Cashflow Forecasting":
                 "PIK %": st.column_config.NumberColumn(format="%0.2f"),
                 "Base Rate %": st.column_config.NumberColumn(format="%0.2f"),
                 "Exit Price % of Par": st.column_config.NumberColumn(format="%0.2f"),
-                "Current Balance": st.column_config.NumberColumn(format="% ,.2f"),
-                "Last Coupon Date": st.column_config.DateColumn(),
+                "Principal": st.column_config.NumberColumn(format="% ,.2f"),
+                "Investment Date": st.column_config.DateColumn(),
                 "Exit Date": st.column_config.DateColumn(),
                 "Interest Frequency": st.column_config.SelectboxColumn(options=list(FREQUENCY_TO_MONTHS.keys())),
                 "Base Rate Type": st.column_config.SelectboxColumn(options=["SOFR", "SONIA", "EURIBOR"]),
             },
         )
 
-        as_of = st.date_input("As-of date for accruals", value=date.today())
 
         def month_end(dt: date) -> date:
             # Returns the last day of the month for a given date
@@ -1239,29 +1238,29 @@ if section == "Cashflow Forecasting":
 
     
 
-        def generate_schedule_for_loan(loan_row: pd.Series, as_of_date: date) -> pd.DataFrame:
+        def generate_schedule_for_loan(loan_row: pd.Series) -> pd.DataFrame:
             name = str(loan_row.get("Loan Name", "Loan"))
             currency = str(loan_row.get("Currency", "USD"))
-            balance = float(loan_row.get("Current Balance", 0.0))
+            balance = float(loan_row.get("Principal", 0.0))
             oid_pct = float(loan_row.get("OID %", 0.0)) / 100.0
             cash_spread = float(loan_row.get("Cash Interest % (over base)", 0.0)) / 100.0
             pik_rate = float(loan_row.get("PIK %", 0.0)) / 100.0
             base_rate = float(loan_row.get("Base Rate %", 0.0)) / 100.0
             freq = str(loan_row.get("Interest Frequency", "Quarterly"))
             months = FREQUENCY_TO_MONTHS.get(freq, 3)
-            last_coupon = loan_row.get("Last Coupon Date")
+            investment_date = loan_row.get("Investment Date")
             exit_date = loan_row.get("Exit Date")
             exit_price_pct = float(loan_row.get("Exit Price % of Par", 100.0)) / 100.0
 
-            if pd.isna(last_coupon):
-                last_coupon = pd.to_datetime(as_of_date)
+            if pd.isna(investment_date):
+                investment_date = pd.to_datetime(date.today())
             if pd.isna(exit_date):
-                exit_date = pd.to_datetime(as_of_date)
+                exit_date = pd.to_datetime(date.today() + timedelta(days=365))
 
-            last_coupon_date = pd.to_datetime(last_coupon).date()
+            investment_dt = pd.to_datetime(investment_date).date()
             exit_dt = pd.to_datetime(exit_date).date()
 
-            # Build period dates from the day after last coupon up to exit
+            # Build period dates from investment date to exit
             schedule_rows = []
             
             # Initial loan disbursement (with OID discount)
@@ -1270,7 +1269,7 @@ if section == "Cashflow Forecasting":
             schedule_rows.append({
                 "Loan Name": name,
                 "Currency": currency,
-                "Date": last_coupon_date,
+                "Date": investment_dt,
                 "Type": "Loan Disbursement",
                 "Days": 0,
                 "Cash Interest": 0.0,
@@ -1280,12 +1279,12 @@ if section == "Cashflow Forecasting":
                 "Net Cashflow": round(-initial_outlay, 2),
             })
 
-            # Handle partial accrual from last coupon to as_of (if before next coupon)
             # Interest accrues daily on balance at (base + spread + PIK). Cash pays per frequency; PIK capitalizes at coupon dates.
             annual_rate_total = base_rate + cash_spread + pik_rate
 
-            # Generate coupon dates
-            coupon_date = add_months(last_coupon_date, months)
+            # Generate coupon dates starting from investment date
+            coupon_date = add_months(investment_dt, months)
+            last_coupon_date = investment_dt
             while coupon_date < exit_dt:
                 period_start = last_coupon_date
                 period_end = coupon_date
@@ -1365,7 +1364,7 @@ if section == "Cashflow Forecasting":
             try:
                 schedules = []
                 for _, row in loans_df.iterrows():
-                    schedules.append(generate_schedule_for_loan(row, as_of))
+                    schedules.append(generate_schedule_for_loan(row))
                 full_schedule = pd.concat(schedules, ignore_index=True) if schedules else pd.DataFrame()
 
                 if full_schedule.empty:
