@@ -429,11 +429,11 @@ if section == "Cashflow Forecasting":
         re_df = st.data_editor(
             default_re,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "Property Type": st.column_config.SelectboxColumn(options=PROPERTY_TYPES),
-                "Acquisition Value": st.column_config.NumberColumn(format="$%,.0f"),
-                "Base NOI (Annual)": st.column_config.NumberColumn(format="$%,.0f"),
+                "Acquisition Value": st.column_config.NumberColumn(),
+                "Base NOI (Annual)": st.column_config.NumberColumn(),
                 "Exit Cap Rate %": st.column_config.NumberColumn(format="%.2f"),
                 "NOI Growth Rate %": st.column_config.NumberColumn(format="%.2f"),
                 "Occupancy Rate %": st.column_config.NumberColumn(format="%.1f"),
@@ -585,7 +585,22 @@ if section == "Cashflow Forecasting":
             years_at_exit = (exit_date - acq_date).days / 365.25
             final_noi = base_noi * ((1 + noi_growth) ** years_at_exit) * occupancy
             exit_value = final_noi / exit_cap
-            exit_proceeds = exit_value - debt_balance
+            
+            # Calculate accrued interest from last operating period to exit
+            # Find the last operating period date
+            last_operating_year = current_date.year if current_date.year < exit_date.year else exit_date.year - 1
+            last_operating_date = date(last_operating_year, 12, 31)
+            if last_operating_date >= exit_date:
+                # If exit is in the same year as last operating period, use last operating date
+                last_operating_date = current_date
+            
+            # Calculate interest accrued from last period to exit
+            days_since_last_period = (exit_date - last_operating_date).days
+            accrued_interest = debt_balance * interest_rate * (days_since_last_period / 365.25)
+            
+            # Total debt payment includes principal plus accrued interest
+            total_debt_payment = debt_balance + accrued_interest
+            exit_proceeds = exit_value - total_debt_payment
             
             schedule.append({
                 "Property Name": name,
@@ -598,8 +613,8 @@ if section == "Cashflow Forecasting":
                 "CapEx Reserve": 0,
                 "Management Fee": 0,
                 "NOI After Fees": round(final_noi, 2),
-                "Interest Payment": 0,
-                "Principal Payment": round(debt_balance, 2),
+                "Interest Payment": round(accrued_interest, 2),
+                "Principal Payment": round(total_debt_payment, 2),
                 "Cash to Equity": round(exit_proceeds, 2),
                 "Debt Balance": 0,
                 "Net Cashflow": round(exit_proceeds, 2),
@@ -618,7 +633,7 @@ if section == "Cashflow Forecasting":
                     st.warning("No schedule generated. Please check inputs.")
                 else:
                     st.subheader("Projected Cashflows")
-                    st.dataframe(full_schedule, use_container_width=True)
+                    st.dataframe(full_schedule, width='stretch')
 
                     # Summary
                     st.subheader("Summary by Property")
@@ -648,7 +663,7 @@ if section == "Cashflow Forecasting":
                     # Format MOIC column to display with 2 decimal places
                     if "MOIC" in summary.columns:
                         summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
-                    st.dataframe(summary, use_container_width=True)
+                    st.dataframe(summary, width='stretch')
 
                     # Download
                     out = io.BytesIO()
@@ -701,16 +716,16 @@ if section == "Cashflow Forecasting":
         pe_df = st.data_editor(
             default_pe,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "Sector": st.column_config.SelectboxColumn(options=SECTORS),
-                "Equity Investment": st.column_config.NumberColumn(format="$%,.0f"),
-                "Entry EBITDA": st.column_config.NumberColumn(format="$%,.0f"),
+                "Equity Investment": st.column_config.NumberColumn(),
+                "Entry EBITDA": st.column_config.NumberColumn(),
                 "Entry EV/EBITDA Multiple": st.column_config.NumberColumn(format="%.1fx"),
                 "Exit EV/EBITDA Multiple": st.column_config.NumberColumn(format="%.1fx"),
                 "EBITDA Growth Rate %": st.column_config.NumberColumn(format="%.2f"),
-                "Entry Debt": st.column_config.NumberColumn(format="$%,.0f"),
-                "Annual Debt Paydown": st.column_config.NumberColumn(format="$%,.0f"),
+                "Entry Debt": st.column_config.NumberColumn(),
+                "Annual Debt Paydown": st.column_config.NumberColumn(),
                 "Interest Rate %": st.column_config.NumberColumn(format="%.2f"),
                 "FCF Conversion %": st.column_config.NumberColumn(format="%.1f"),
                 "Ownership %": st.column_config.NumberColumn(format="%.1f"),
@@ -826,7 +841,25 @@ if section == "Cashflow Forecasting":
             years_from_entry = (exit_date - entry_date).days / 365.25
             exit_ebitda = entry_ebitda * ((1 + ebitda_growth) ** years_from_entry)
             exit_ev = exit_ebitda * exit_multiple
-            exit_equity_value = exit_ev - debt_balance
+            
+            # Calculate accrued interest from last annual period to exit
+            # Find the last annual period date
+            last_annual_year = current_year
+            if current_year < exit_year:
+                last_annual_year = exit_year - 1
+            last_annual_date = date(last_annual_year, 12, 31)
+            if last_annual_date >= exit_date:
+                # If exit is in the same year as entry, use entry date as last period
+                last_annual_date = entry_date
+            
+            # Calculate interest accrued from last period to exit
+            days_since_last_period = (exit_date - last_annual_date).days
+            accrued_interest = debt_balance * interest_rate * (days_since_last_period / 365.25)
+            
+            # Total debt payment includes principal plus accrued interest
+            total_debt_payment = debt_balance + accrued_interest
+            
+            exit_equity_value = exit_ev - total_debt_payment
             exit_proceeds = exit_equity_value * ownership
             exit_txn_costs = exit_ev * txn_costs_pct
             
@@ -846,8 +879,8 @@ if section == "Cashflow Forecasting":
                 "Investor Equity Cashflow": round(exit_proceeds, 2),
                 "Transaction Costs": round(-exit_txn_costs, 2),
                 "Management Fees": round(-final_mgmt_fee, 2),
-                "Interest Expense": 0,
-                "Debt Paydown": round(-debt_balance, 2),
+                "Interest Expense": round(-accrued_interest, 2),
+                "Debt Paydown": round(-total_debt_payment, 2),
                 "Net Cashflow": round(net_exit_proceeds, 2),
             })
 
@@ -864,7 +897,7 @@ if section == "Cashflow Forecasting":
                     st.warning("No schedule generated. Please check inputs.")
                 else:
                     st.subheader("Projected Cashflows & Valuations")
-                    st.dataframe(full_schedule, use_container_width=True)
+                    st.dataframe(full_schedule, width='stretch')
 
                     # Summary
                     st.subheader("Summary by Company")
@@ -893,7 +926,7 @@ if section == "Cashflow Forecasting":
                     # Format MOIC column to display with 2 decimal places
                     if "MOIC" in summary.columns:
                         summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
-                    st.dataframe(summary, use_container_width=True)
+                    st.dataframe(summary, width='stretch')
 
                     # Download
                     out = io.BytesIO()
@@ -951,19 +984,19 @@ if section == "Cashflow Forecasting":
         infra_df = st.data_editor(
             default_infra,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
                 "Asset Type": st.column_config.SelectboxColumn(options=ASSET_TYPES),
                 "Revenue Model": st.column_config.SelectboxColumn(options=REVENUE_MODELS),
                 "Indexation Type": st.column_config.SelectboxColumn(options=INDEXATION),
-                "Investment Amount": st.column_config.NumberColumn(format="$%,.0f"),
-                "Base Annual Revenue": st.column_config.NumberColumn(format="$%,.0f"),
+                "Investment Amount": st.column_config.NumberColumn(),
+                "Base Annual Revenue": st.column_config.NumberColumn(),
                 "Indexation Rate %": st.column_config.NumberColumn(format="%.2f"),
                 "Volume Growth % (if Merchant)": st.column_config.NumberColumn(format="%.2f"),
-                "Fixed OpEx (Annual)": st.column_config.NumberColumn(format="$%,.0f"),
+                "Fixed OpEx (Annual)": st.column_config.NumberColumn(),
                 "Variable OpEx per Unit": st.column_config.NumberColumn(format="$%.2f"),
                 "OpEx Inflation %": st.column_config.NumberColumn(format="%.2f"),
-                "Major Maintenance CapEx": st.column_config.NumberColumn(format="$%,.0f"),
+                "Major Maintenance CapEx": st.column_config.NumberColumn(),
                 "Maintenance Frequency (Years)": st.column_config.NumberColumn(format="%.0f"),
                 "Leverage %": st.column_config.NumberColumn(format="%.1f"),
                 "Interest Rate %": st.column_config.NumberColumn(format="%.2f"),
@@ -1077,8 +1110,8 @@ if section == "Cashflow Forecasting":
                         "Operating Expenses": round(-annual_opex, 2),
                         "Maintenance CapEx": round(-annual_capex, 2),
                         "EBITDA": round(ebitda, 2),
-                        "Interest Expense": round(-annual_interest, 2),
-                        "Principal Payment": round(-principal_payment, 2),
+                        "Interest Expense": round(annual_interest, 2),
+                        "Principal Payment": round(principal_payment, 2),
                         "Distributable Cash": round(distributable, 2),
                         "Distribution to Equity": round(distribution, 2),
                         "Debt Balance": round(debt_balance, 2),
@@ -1096,7 +1129,22 @@ if section == "Cashflow Forecasting":
             exit_ebitda = exit_revenue - exit_opex
             
             exit_ev = exit_revenue * exit_multiple  # Infrastructure uses EV/Revenue multiples
-            exit_proceeds = exit_ev - debt_balance
+            
+            # Calculate accrued interest from last operating year to exit
+            # Find the last operating year date
+            last_operating_year = current_year if current_year < exit_year else exit_year - 1
+            last_operating_date = date(last_operating_year, 12, 31)
+            if last_operating_date >= exit_date:
+                # If exit is in the same year as last operating year, use last operating date
+                last_operating_date = date(last_operating_year, 12, 31)
+            
+            # Calculate interest accrued from last period to exit
+            days_since_last_period = (exit_date - last_operating_date).days
+            accrued_interest = debt_balance * interest_rate * (days_since_last_period / 365.25)
+            
+            # Total debt payment includes principal plus accrued interest
+            total_debt_payment = debt_balance + accrued_interest
+            exit_proceeds = exit_ev - total_debt_payment
             
             schedule.append({
                 "Asset Name": name,
@@ -1107,8 +1155,8 @@ if section == "Cashflow Forecasting":
                 "Operating Expenses": round(-exit_opex, 2),
                 "Maintenance CapEx": 0,
                 "EBITDA": round(exit_ebitda, 2),
-                "Interest Expense": 0,
-                "Principal Payment": round(-debt_balance, 2),
+                "Interest Expense": round(accrued_interest, 2),
+                "Principal Payment": round(total_debt_payment, 2),
                 "Distributable Cash": round(exit_proceeds, 2),
                 "Distribution to Equity": round(exit_proceeds, 2),
                 "Debt Balance": 0,
@@ -1128,7 +1176,7 @@ if section == "Cashflow Forecasting":
                     st.warning("No schedule generated. Please check inputs.")
                 else:
                     st.subheader("Projected Cashflows")
-                    st.dataframe(full_schedule, use_container_width=True)
+                    st.dataframe(full_schedule, width='stretch')
 
                     # Summary
                     st.subheader("Summary by Asset")
@@ -1158,7 +1206,7 @@ if section == "Cashflow Forecasting":
                     # Format MOIC column to display with 2 decimal places
                     if "MOIC" in summary.columns:
                         summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
-                    st.dataframe(summary, use_container_width=True)
+                    st.dataframe(summary, width='stretch')
 
                     # Download
                     out = io.BytesIO()
@@ -1215,14 +1263,14 @@ if section == "Cashflow Forecasting":
         loans_df = st.data_editor(
             default_loans,
             num_rows="dynamic",
-            use_container_width=True,
+            width='stretch',
             column_config={
-                "OID %": st.column_config.NumberColumn(format="%0.2f"),
-                "Cash Interest % (over base)": st.column_config.NumberColumn(format="%0.2f"),
-                "PIK %": st.column_config.NumberColumn(format="%0.2f"),
-                "Base Rate %": st.column_config.NumberColumn(format="%0.2f"),
-                "Exit Price % of Par": st.column_config.NumberColumn(format="%0.2f"),
-                "Principal": st.column_config.NumberColumn(format="% ,.2f"),
+                "OID %": st.column_config.NumberColumn(format="%.2f"),
+                "Cash Interest % (over base)": st.column_config.NumberColumn(format="%.2f"),
+                "PIK %": st.column_config.NumberColumn(format="%.2f"),
+                "Base Rate %": st.column_config.NumberColumn(format="%.2f"),
+                "Exit Price % of Par": st.column_config.NumberColumn(format="%.2f"),
+                "Principal": st.column_config.NumberColumn(),
                 "Investment Date": st.column_config.DateColumn(),
                 "Exit Date": st.column_config.DateColumn(),
                 "Interest Frequency": st.column_config.SelectboxColumn(options=list(FREQUENCY_TO_MONTHS.keys())),
@@ -1371,7 +1419,7 @@ if section == "Cashflow Forecasting":
                     st.warning("No schedule generated. Please check inputs.")
                 else:
                     st.subheader("Projected Cashflows")
-                    st.dataframe(full_schedule, use_container_width=True)
+                    st.dataframe(full_schedule, width='stretch')
 
                     # Summary per loan
                     st.subheader("Summary by Loan")
@@ -1401,7 +1449,7 @@ if section == "Cashflow Forecasting":
                     # Format MOIC column to display with 2 decimal places
                     if "MOIC" in summary.columns:
                         summary["MOIC"] = summary["MOIC"].apply(lambda x: f"{x:.2f}" if pd.notna(x) else x)
-                    st.dataframe(summary, use_container_width=True)
+                    st.dataframe(summary, width='stretch')
 
                     # Download
                     out = io.BytesIO()
