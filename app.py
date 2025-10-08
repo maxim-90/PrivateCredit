@@ -5,10 +5,248 @@ import io
 import os
 from datetime import datetime, date, timedelta
 import numpy as np
+import requests
+import json
 
 # Set Streamlit to run in environments like Replit
 os.environ['STREAMLIT_SERVER_PORT'] = '8080'
 os.environ['STREAMLIT_SERVER_ADDRESS'] = '0.0.0.0'
+
+# FRED API configuration
+FRED_API_KEY = "2d2513d1b7c8d2e6d2d9cfde1d2ea6a6"
+FRED_BASE_URL = "https://api.stlouisfed.org/fred"
+
+def fetch_fred_data(series_id: str, start_date: str = None, end_date: str = None) -> pd.DataFrame:
+    """Fetch data from FRED API for a given series ID."""
+    try:
+        params = {
+            'series_id': series_id,
+            'api_key': FRED_API_KEY,
+            'file_type': 'json',
+            'limit': 1000
+        }
+        
+        if start_date:
+            params['observation_start'] = start_date
+        if end_date:
+            params['observation_end'] = end_date
+            
+        response = requests.get(f"{FRED_BASE_URL}/series/observations", params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        if 'observations' not in data:
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data['observations'])
+        if df.empty:
+            return pd.DataFrame()
+            
+        # Convert date and value columns
+        df['date'] = pd.to_datetime(df['date'])
+        df['value'] = pd.to_numeric(df['value'], errors='coerce')
+        
+        # Remove rows with missing values
+        df = df.dropna(subset=['value'])
+        
+        return df[['date', 'value']].sort_values('date')
+        
+    except Exception as e:
+        st.error(f"Error fetching FRED data for {series_id}: {str(e)}")
+        return pd.DataFrame()
+
+def get_treasury_curve(investment_date: date = None, exit_date: date = None) -> pd.DataFrame:
+    """Fetch Treasury data and create 3M forward rates using discount factor bootstrapping."""
+    try:
+        # Fetch Treasury Constant Maturity Yields
+        treasury_data = {}
+        treasury_series = {
+            '3M': 'DGS3MO',   # 3-Month Treasury
+            '6M': 'DGS6MO',   # 6-Month Treasury  
+            '1Y': 'DGS1',     # 1-Year Treasury
+            '2Y': 'DGS2',     # 2-Year Treasury
+            '5Y': 'DGS5',     # 5-Year Treasury
+            '10Y': 'DGS10',   # 10-Year Treasury
+            '30Y': 'DGS30'    # 30-Year Treasury
+        }
+        
+        # Convert investment_date to string format for FRED API
+        investment_date_str = investment_date.strftime('%Y-%m-%d') if investment_date else None
+        
+        # Calculate start date (90 days before investment date to ensure we have data)
+        start_date_str = None
+        if investment_date:
+            start_date = investment_date - timedelta(days=90)
+            start_date_str = start_date.strftime('%Y-%m-%d')
+        
+        for tenor, series_id in treasury_series.items():
+            data = fetch_fred_data(series_id, start_date=start_date_str, end_date=investment_date_str)
+            if not data.empty:
+                # Get the rate as of the investment date (or closest available date before)
+                investment_date_pd = pd.to_datetime(investment_date) if investment_date else pd.Timestamp.now()
+                
+                # Filter data to dates on or before investment date
+                data_filtered = data[data['date'] <= investment_date_pd]
+                
+                if not data_filtered.empty:
+                    # Use the rate closest to (but not after) the investment date
+                    treasury_data[tenor] = data_filtered['value'].iloc[-1] / 100.0  # Convert to decimal
+                else:
+                    st.warning(f"No Treasury data available before investment date for {tenor}")
+            else:
+                st.warning(f"Could not fetch {tenor} Treasury data from FRED")
+        
+        if not treasury_data:
+            st.error("Could not fetch any Treasury data from FRED")
+            return pd.DataFrame()
+            
+        # Use the shortest available rate as our 3M proxy
+        if '3M' in treasury_data:
+            latest_3m = treasury_data['3M']
+        elif '6M' in treasury_data:
+            latest_3m = treasury_data['6M']
+        else:
+            latest_3m = list(treasury_data.values())[0]  # Use first available rate
+        
+        # Get rates for bootstrapping
+        latest_6m = treasury_data.get('6M', latest_3m)
+        latest_1y = treasury_data.get('1Y', latest_6m)
+        latest_2y = treasury_data.get('2Y', latest_1y)
+        
+        # Create 3M forward rates using discount factor bootstrapping
+        curve_start_date = investment_date if investment_date else date.today()
+        curve_end_date = exit_date if exit_date else add_months(curve_start_date, 24)
+        
+        # Calculate the number of 3-month periods needed
+        total_months = (curve_end_date.year - curve_start_date.year) * 12 + (curve_end_date.month - curve_start_date.month)
+        num_quarters = (total_months + 2) // 3
+        num_quarters = max(num_quarters, 1)
+        
+        # Proper bootstrapping methodology using linear interpolation
+        import numpy as np
+        
+        # Define market maturities and yields (in years)
+        maturities = np.array([0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0])
+        yields = np.array([
+            latest_3m, latest_6m, latest_1y, latest_2y,
+            treasury_data.get('5Y', latest_2y), 
+            treasury_data.get('10Y', latest_2y), 
+            treasury_data.get('30Y', latest_2y)
+        ])
+        
+        # Create discount factors from zero rates
+        discount_factors = 1 / (1 + yields) ** maturities
+        
+        # Function to interpolate zero rates linearly
+        def zero_rate_interp(t, maturities, yields):
+            if t in maturities:
+                return yields[maturities == t][0]
+            else:
+                for i in range(len(maturities)-1):
+                    if maturities[i] < t < maturities[i+1]:
+                        t1, t2 = maturities[i], maturities[i+1]
+                        r1, r2 = yields[i], yields[i+1]
+                        r_t = r1 + (r2 - r1) * (t - t1) / (t2 - t1)
+                        return r_t
+                # If t beyond last maturity, extrapolate using last interval
+                t1, t2 = maturities[-2], maturities[-1]
+                r1, r2 = yields[-2], yields[-1]
+                r_t = r2 + (r2 - r1) / (t2 - t1) * (t - t2)
+                return r_t
+        
+        # Generate 3-month forward rates
+        tenor = 0.25  # 3 months
+        max_maturity = (num_quarters * 3) / 12.0  # Convert quarters to years
+        forward_times = np.arange(tenor, max_maturity + tenor, tenor)
+        
+        forward_periods = []
+        forward_rates = []
+        
+        for i, t in enumerate(forward_times):
+            t_prev = t - tenor
+            
+            # Calculate dates
+            forward_start_date = add_months(curve_start_date, i * 3)
+            forward_end_date = add_months(curve_start_date, (i + 1) * 3)
+            
+            if forward_start_date >= curve_end_date:
+                break
+                
+            if forward_end_date > curve_end_date:
+                forward_end_date = curve_end_date
+            
+            forward_periods.append({
+                'start_date': forward_start_date,
+                'end_date': forward_end_date,
+                'period_months': 3
+            })
+            
+            # Interpolate zero rates and compute discount factors
+            if t_prev == 0:
+                df_prev = 1.0
+            else:
+                r_prev = zero_rate_interp(t_prev, maturities, yields)
+                df_prev = 1 / (1 + r_prev) ** t_prev
+            
+            r_t = zero_rate_interp(t, maturities, yields)
+            df_t = 1 / (1 + r_t) ** t
+            
+            # Forward rate formula: f = (df_prev / df_t)^(1/tenor) - 1
+            f = (df_prev / df_t) ** (1/tenor) - 1
+            
+            forward_rates.append(round(f, 6))
+            
+        return pd.DataFrame({
+            'forward_start': [p['start_date'] for p in forward_periods],
+            'forward_end': [p['end_date'] for p in forward_periods],
+            'rate': forward_rates
+        })
+        
+    except Exception as e:
+        st.error(f"Error creating Treasury curve: {str(e)}")
+        return pd.DataFrame()
+
+def get_forward_rate_for_period(period_start_date: date, treasury_curve: pd.DataFrame = None) -> float:
+    """Get the 3M forward rate for a period starting at the given date."""
+    if treasury_curve is None or treasury_curve.empty:
+        return 0.05  # 5% default
+    
+    target_datetime = pd.to_datetime(period_start_date)
+    
+    # Find the appropriate 3M forward rate for this period start date
+    for i, row in treasury_curve.iterrows():
+        forward_start = pd.to_datetime(row['forward_start'])
+        forward_end = pd.to_datetime(row['forward_end'])
+        
+        if forward_start <= target_datetime < forward_end or target_datetime == forward_start:
+            return row['rate']
+    
+    # If target date is before the first forward period, use the first rate
+    if target_datetime < pd.to_datetime(treasury_curve['forward_start'].iloc[0]):
+        return treasury_curve['rate'].iloc[0]
+    
+    # If target date is after the last forward period, use the last rate
+    if target_datetime >= pd.to_datetime(treasury_curve['forward_end'].iloc[-1]):
+        return treasury_curve['rate'].iloc[-1]
+    
+    # If we're between forward periods, interpolate
+    for i in range(len(treasury_curve) - 1):
+        current_end = pd.to_datetime(treasury_curve['forward_end'].iloc[i])
+        next_start = pd.to_datetime(treasury_curve['forward_start'].iloc[i + 1])
+        
+        if current_end <= target_datetime <= next_start:
+            rate1 = treasury_curve['rate'].iloc[i]
+            rate2 = treasury_curve['rate'].iloc[i + 1]
+            total_days = (next_start - current_end).days
+            target_days = (target_datetime - current_end).days
+            
+            if total_days == 0:
+                return rate1
+                
+            factor = target_days / total_days
+            return rate1 + factor * (rate2 - rate1)
+    
+    return treasury_curve['rate'].iloc[-1]
 
 def add_months(dt: date, months: int) -> date:
     # Add months while preserving end-of-month logic
@@ -1293,6 +1531,7 @@ if section == "Cashflow Forecasting":
             oid_pct = float(loan_row.get("OID %", 0.0)) / 100.0
             cash_spread = float(loan_row.get("Cash Interest % (over base)", 0.0)) / 100.0
             pik_rate = float(loan_row.get("PIK %", 0.0)) / 100.0
+            base_rate_type = str(loan_row.get("Base Rate Type", "SOFR"))
             base_rate = float(loan_row.get("Base Rate %", 0.0)) / 100.0
             freq = str(loan_row.get("Interest Frequency", "Quarterly"))
             months = FREQUENCY_TO_MONTHS.get(freq, 3)
@@ -1307,6 +1546,16 @@ if section == "Cashflow Forecasting":
 
             investment_dt = pd.to_datetime(investment_date).date()
             exit_dt = pd.to_datetime(exit_date).date()
+            
+            # Get Treasury curve if SOFR is selected as base rate type
+            treasury_curve = None
+            if base_rate_type == "SOFR":
+                treasury_curve = get_treasury_curve(investment_dt, exit_dt)
+                if treasury_curve.empty:
+                    st.warning(f"Could not fetch Treasury data for {name}. Using static base rate of {base_rate*100:.2f}%.")
+                else:
+                    loan_duration = (exit_dt - investment_dt).days / 365.25
+                    st.info(f"Using dynamic Treasury-based rates for {name}. Investment: {investment_dt}, Exit: {exit_dt} ({loan_duration:.1f}y), First 3M forward rate: {treasury_curve['rate'].iloc[0]*100:.2f}%")
 
             # Build period dates from investment date to exit
             schedule_rows = []
@@ -1320,15 +1569,13 @@ if section == "Cashflow Forecasting":
                 "Date": investment_dt,
                 "Type": "Loan Disbursement",
                 "Days": 0,
+                "Forward Rate %": 0.0000,  # No interest accrual for disbursement
                 "Cash Interest": 0.0,
                 "PIK Interest": 0.0,
                 "Principal": round(-initial_outlay, 2),
                 "Balance": round(balance, 2),
                 "Net Cashflow": round(-initial_outlay, 2),
             })
-
-            # Interest accrues daily on balance at (base + spread + PIK). Cash pays per frequency; PIK capitalizes at coupon dates.
-            annual_rate_total = base_rate + cash_spread + pik_rate
 
             # Generate coupon dates starting from investment date
             coupon_date = add_months(investment_dt, months)
@@ -1337,18 +1584,36 @@ if section == "Cashflow Forecasting":
                 period_start = last_coupon_date
                 period_end = coupon_date
                 days = (period_end - period_start).days
+                
+                # Get the appropriate base rate for this period
+                if base_rate_type == "SOFR" and treasury_curve is not None and not treasury_curve.empty:
+                    # Get 3M forward rate starting at the period start date
+                    current_forward_rate = get_forward_rate_for_period(period_start, treasury_curve)
+                    annual_rate_total = current_forward_rate + cash_spread + pik_rate
+                    period_cash_interest = balance * (current_forward_rate + cash_spread) * (days / 365.0)
+                else:
+                    annual_rate_total = base_rate + cash_spread + pik_rate
+                    period_cash_interest = balance * (base_rate + cash_spread) * (days / 365.0)
+                
                 # Simple ACT/365 accrual
                 period_interest_total = balance * annual_rate_total * (days / 365.0)
-                period_cash_interest = balance * (base_rate + cash_spread) * (days / 365.0)
                 period_pik_interest = period_interest_total - period_cash_interest
                 balance += period_pik_interest  # Capitalize PIK
 
+                # Get the forward rate used for this period
+                if base_rate_type == "SOFR" and treasury_curve is not None and not treasury_curve.empty:
+                    period_forward_rate = get_forward_rate_for_period(period_start, treasury_curve)
+                    period_forward_rate_display = round(period_forward_rate * 100, 4)  # Convert to percentage
+                else:
+                    period_forward_rate_display = round(base_rate * 100, 4)  # Static rate
+                
                 schedule_rows.append({
                     "Loan Name": name,
                     "Currency": currency,
                     "Date": period_end,
                     "Type": "Coupon Payment",
                     "Days": days,
+                    "Forward Rate %": period_forward_rate_display,
                     "Cash Interest": round(period_cash_interest, 2),
                     "PIK Interest": round(period_pik_interest, 2),
                     "Principal": 0.0,
@@ -1362,8 +1627,18 @@ if section == "Cashflow Forecasting":
             # Final partial period from last coupon to exit
             if last_coupon_date < exit_dt:
                 days = (exit_dt - last_coupon_date).days
+                
+                # Get the appropriate base rate for the final period
+                if base_rate_type == "SOFR" and treasury_curve is not None and not treasury_curve.empty:
+                    # Get 3M forward rate starting at the last coupon date
+                    current_forward_rate = get_forward_rate_for_period(last_coupon_date, treasury_curve)
+                    annual_rate_total = current_forward_rate + cash_spread + pik_rate
+                    period_cash_interest = balance * (current_forward_rate + cash_spread) * (days / 365.0)
+                else:
+                    annual_rate_total = base_rate + cash_spread + pik_rate
+                    period_cash_interest = balance * (base_rate + cash_spread) * (days / 365.0)
+                
                 period_interest_total = balance * annual_rate_total * (days / 365.0)
-                period_cash_interest = balance * (base_rate + cash_spread) * (days / 365.0)
                 period_pik_interest = period_interest_total - period_cash_interest
                 # Accrued interest: cash portion accrues but is not paid until exit; PIK accrues but is not capitalized until exit
 
@@ -1376,12 +1651,20 @@ if section == "Cashflow Forecasting":
                 principal_repaid = balance_at_exit_before_pik_cap * exit_price_pct
                 premium_or_discount = principal_repaid - balance_at_exit_before_pik_cap
 
+                # Get the forward rate used for the final period
+                if base_rate_type == "SOFR" and treasury_curve is not None and not treasury_curve.empty:
+                    final_forward_rate = get_forward_rate_for_period(last_coupon_date, treasury_curve)
+                    final_forward_rate_display = round(final_forward_rate * 100, 4)
+                else:
+                    final_forward_rate_display = round(base_rate * 100, 4)
+                
                 schedule_rows.append({
                     "Loan Name": name,
                     "Currency": currency,
                     "Date": exit_dt,
                     "Type": "Exit Accrual",
                     "Days": days,
+                    "Forward Rate %": final_forward_rate_display,
                     "Cash Interest": round(accrued_cash, 2),
                     "PIK Interest": round(accrued_pik, 2),
                     "Principal": 0.0,
@@ -1395,6 +1678,7 @@ if section == "Cashflow Forecasting":
                     "Date": exit_dt,
                     "Type": "Exit Payment",
                     "Days": 0,
+                    "Forward Rate %": 0.0000,  # No interest accrual for principal payment
                     "Cash Interest": 0.0,
                     "PIK Interest": 0.0,
                     "Principal": round(principal_repaid, 2),
@@ -1410,6 +1694,54 @@ if section == "Cashflow Forecasting":
 
         if st.button("Generate Loan Cashflow Forecast"):
             try:
+                # Check if any loans use SOFR and show Treasury market data
+                sofr_loans = loans_df[loans_df.get("Base Rate Type", "") == "SOFR"]
+                if not sofr_loans.empty:
+                    st.info("Fetching Treasury Constant Maturity data from FRED API...")
+                    
+                    # Get the Treasury rates used for bootstrapping
+                    treasury_series = {
+                        '3M': 'DGS3MO', '6M': 'DGS6MO', '1Y': 'DGS1', 
+                        '2Y': 'DGS2', '5Y': 'DGS5', '10Y': 'DGS10', '30Y': 'DGS30'
+                    }
+                    
+                    # Get investment dates from loans to show rate context
+                    investment_dates = loans_df['Investment Date'].unique()
+                    if len(investment_dates) > 0:
+                        sample_investment_date = pd.to_datetime(investment_dates[0]).date()
+                        st.info(f"📅 Using Treasury rates as of investment date: {sample_investment_date}")
+                    
+                    treasury_rates = {}
+                    for tenor, series_id in treasury_series.items():
+                        # Use the sample investment date for rate display
+                        end_date_str = sample_investment_date.strftime('%Y-%m-%d') if len(investment_dates) > 0 else None
+                        start_date_str = None
+                        if len(investment_dates) > 0:
+                            start_date = sample_investment_date - timedelta(days=90)
+                            start_date_str = start_date.strftime('%Y-%m-%d')
+                        
+                        data = fetch_fred_data(series_id, start_date=start_date_str, end_date=end_date_str)
+                        if not data.empty:
+                            investment_date_pd = pd.to_datetime(sample_investment_date) if len(investment_dates) > 0 else pd.Timestamp.now()
+                            data_filtered = data[data['date'] <= investment_date_pd]
+                            if not data_filtered.empty:
+                                treasury_rates[tenor] = data_filtered['value'].iloc[-1]
+                    
+                    if treasury_rates:
+                        st.success(f"✅ Treasury market data loaded successfully!")
+                        rate_display = ", ".join([f"{tenor} = {rate:.2f}%" for tenor, rate in treasury_rates.items()])
+                        st.info(f"📊 Market Data: {rate_display}")
+                        
+                        # Show methodology
+                        st.caption("💡 **Treasury-Based Discount Factor Bootstrapping:**")
+                        st.caption("• **Formula**: f(Tk, Tk+1) = D(Tk) / D(Tk+1) - 1")
+                        st.caption("• **Discount Factors**: D(T) = 1 / (1 + R(T) × T)")
+                        st.caption("• **Using Treasury Constant Maturity Yields as base rates**")
+                        st.caption("• **Forward curves are anchored to each loan's investment date**")
+                        st.caption("• Each SOFR loan will use Treasury-based forward rates")
+                    else:
+                        st.warning("⚠️ Could not fetch Treasury data. Using static base rates for SOFR loans.")
+                
                 schedules = []
                 for _, row in loans_df.iterrows():
                     schedules.append(generate_schedule_for_loan(row))
@@ -1424,8 +1756,14 @@ if section == "Cashflow Forecasting":
                     # Summary per loan
                     st.subheader("Summary by Loan")
                     summary = (
-                        full_schedule.groupby(["Loan Name", "Currency"], as_index=False)[["Cash Interest", "PIK Interest", "Principal", "Net Cashflow"]]
-                        .sum()
+                        full_schedule.groupby(["Loan Name", "Currency"], as_index=False)[["Forward Rate %", "Cash Interest", "PIK Interest", "Principal", "Net Cashflow"]]
+                        .agg({
+                            "Forward Rate %": "mean",  # Average forward rate
+                            "Cash Interest": "sum",
+                            "PIK Interest": "sum", 
+                            "Principal": "sum",
+                            "Net Cashflow": "sum"
+                        })
                     )
                     
                     # Add returns calculation
